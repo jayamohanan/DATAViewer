@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Poki Game Viewer</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #6b7385;
+    --line: #e3e6ec; --accent: #2f6fed; --accent-soft: #e8f0ff;
+    --good: #1f9d55; --new: #e8590c; --bad: #d64545; --hl: #fff4cc;
+    --shadow: 0 10px 30px rgba(20, 30, 50, .18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b1f27; --text: #e6e9ef; --muted: #8d95a7;
+      --line: #2b313d; --accent: #6b9bff; --accent-soft: #233150;
+      --good: #4cc77f; --new: #f76707; --bad: #ff7b7b; --hl: #3d3517;
+      --shadow: 0 10px 30px rgba(0, 0, 0, .5);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  header h1 { font-size: 17px; margin: 0 12px 0 0; }
+  input[type=search], select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  input[type=search] { width: 280px; max-width: 100%; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 4px 10px; font-weight: 600; }
+  .chip button { border: 0; background: none; color: inherit; cursor: pointer; font-size: 15px; padding: 0; }
+  .count { color: var(--muted); margin-left: auto; }
+  .loader { max-width: 520px; margin: 60px auto; text-align: center; padding: 30px; border: 2px dashed var(--line); border-radius: 14px; background: var(--panel); }
+  .loader.drag { border-color: var(--accent); }
+  main { padding: 12px 16px 40px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+  th { position: sticky; top: var(--hdr-h, 58px); background: var(--panel); z-index: 2; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); white-space: nowrap; user-select: none; }
+  th.sortable { cursor: pointer; }
+  th.sortable:hover { color: var(--text); }
+  th.active { color: var(--accent); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr:hover td { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+  .thumb { width: 54px; height: 54px; border-radius: 8px; object-fit: cover; background: var(--line); display: block; }
+  .title a { color: var(--text); font-weight: 600; text-decoration: none; }
+  .title a:hover { color: var(--accent); text-decoration: underline; }
+  .desc { color: var(--muted); font-size: 12px; max-width: 420px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .dev { color: var(--accent); cursor: pointer; border-bottom: 1px dotted var(--accent); }
+  .new { display: inline-block; margin-right: 6px; padding: 1px 6px; border-radius: 5px; background: var(--new); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .04em; vertical-align: 1px; }
+  .likes { color: var(--good); font-weight: 600; }
+  .dislikes { color: var(--bad); }
+  .est { opacity: .7; }
+  .bar { height: 4px; background: var(--bad); border-radius: 2px; margin-top: 4px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--good); }
+
+  /* developer popover */
+  #pop { position: fixed; z-index: 50; width: 520px; max-width: calc(100vw - 24px); max-height: 70vh; display: none; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+  #pop.open { display: flex; }
+  #pop .ph { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  #pop .ph b { font-size: 15px; }
+  #pop .ph div { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  #pop .pl { overflow-y: auto; }
+  #pop table { border-radius: 0; }
+  #pop td, #pop th { padding: 5px 10px; font-size: 13px; }
+  #pop th { position: sticky; top: 0; }
+  #pop tr.cur td { background: var(--hl); font-weight: 700; }
+  #pop .rk { color: var(--muted); width: 1%; }
+  #pop a { color: inherit; text-decoration: none; }
+  #pop a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header id="hdr">
+  <h1>Poki Games</h1>
+  <input type="search" id="q" placeholder="Search title, developer, description…" disabled>
+  <select id="cat" disabled><option value="">All categories</option></select>
+  <span id="devFilter"></span>
+  <span class="count" id="count"></span>
+</header>
+
+<div class="loader" id="loader">
+  <p id="loadMsg">Loading <code>data/master.csv</code>…</p>
+  <p><input type="file" id="file" accept=".csv"></p>
+  <p style="color:var(--muted);font-size:12px">If the file doesn't load automatically (opened via file://), pick or drop the CSV here.</p>
+</div>
+
+<main id="main" hidden>
+  <table>
+    <thead><tr id="thead"></tr></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</main>
+
+<div id="pop"></div>
+
+<script>
+const CSV_PATH = 'data/master.csv';
+const NEW_SINCE = 2025 * 12; // games released Jan 2025 or later get the NEW marker
+
+// ---------- CSV parsing ----------
+function parseCSV(text) {
+  const rows = []; let row = [], field = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); rows.push(row); row = []; field = '';
+    } else field += c;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  const head = rows.shift().map(h => h.replace(/^\uFEFF/, '').trim());
+  return rows.filter(r => r.some(v => v !== '')).map(r => Object.fromEntries(head.map((h, i) => [h, r[i] ?? ''])));
+}
+
+// "17.5M" -> 17500000, "9.6K" -> 9600, "1,234" -> 1234; null if unparsable
+function num(s) {
+  const m = String(s).trim().replace(/,/g, '').match(/^([\d.]+)\s*([KMB])?$/i);
+  if (!m) return null;
+  return parseFloat(m[1]) * ({ K: 1e3, M: 1e6, B: 1e9 }[(m[2] || '').toUpperCase()] || 1);
+}
+function fmt(n) {
+  if (n == null) return '–';
+  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 1 : 2).replace(/\.?0+$/, '') + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 1 : 2).replace(/\.?0+$/, '') + 'K';
+  return String(Math.round(n));
+}
+// "March 2019" (possibly buried in other text) -> {label: 'Mar 2019', ts: 2019*12+2}
+const MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+function parseMonth(s) {
+  const m = String(s).match(new RegExp(`\\b(${MONTHS.join('|')})\\s+(\\d{4})\\b`, 'i'));
+  if (!m) return null;
+  const mi = MONTHS.indexOf(m[1].toLowerCase());
+  return { label: m[1].slice(0, 3).replace(/^./, c => c.toUpperCase()) + ' ' + m[2], ts: +m[2] * 12 + mi };
+}
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ---------- state ----------
+let games = [], byDev = new Map();
+const state = { sort: 'likes', dir: -1, q: '', cat: '', dev: '' };
+
+function load(text) {
+  games = parseCSV(text).map(r => {
+    const likes = num(r['Likes']) ?? 0;
+    const votes = num(r['Total Votes']);
+    let dislikes = num(r['Dislikes']), est = false;
+    // Some Dislikes cells were exported as "#####"; estimate from total votes.
+    if (dislikes == null && votes != null) { dislikes = Math.max(0, votes - likes); est = true; }
+    return {
+      id: r['id'], title: r['Game Title'], url: r['Game URL'], dev: r['Developer'].trim(),
+      likes, dislikes, est, votes: votes ?? likes + (dislikes || 0),
+      rating: parseFloat(r['Rating']) || null, desc: r['Description'],
+      tags: r['Category Tags'].split(',').map(t => t.trim()).filter(Boolean),
+      thumb: r['Thumbnail Image URL'], crumb: r['Breadcrumb Path'],
+      genre: r['Genre'] || '', release: parseMonth(r['Poki Release Date'] || ''),
+    };
+  });
+  games.forEach(g => { g.released = g.release?.ts ?? null; g.isNew = g.released != null && g.released >= NEW_SINCE; });
+  games.forEach(g => g.ratio = g.likes + (g.dislikes || 0) ? g.likes / (g.likes + (g.dislikes || 0)) : null);
+
+  // global like rank
+  [...games].sort(likeOrder).forEach((g, i) => g.rank = i + 1);
+  // per-developer ranking by likes
+  byDev = new Map();
+  for (const g of games) { if (!byDev.has(g.dev)) byDev.set(g.dev, []); byDev.get(g.dev).push(g); }
+  for (const list of byDev.values()) { list.sort(likeOrder); list.forEach((g, i) => g.devRank = i + 1); }
+
+  const cats = [...new Set(games.flatMap(g => g.tags))].sort();
+  document.getElementById('cat').insertAdjacentHTML('beforeend', cats.map(c => `<option>${esc(c)}</option>`).join(''));
+  document.getElementById('q').disabled = document.getElementById('cat').disabled = false;
+  document.getElementById('loader').hidden = true;
+  document.getElementById('main').hidden = false;
+  render();
+}
+const likeOrder = (a, b) => b.likes - a.likes || b.votes - a.votes || a.title.localeCompare(b.title);
+
+// ---------- table ----------
+const COLS = [
+  { key: 'rank', label: '#', num: true },
+  { key: null, label: '' },
+  { key: 'title', label: 'Game' },
+  { key: 'dev', label: 'Developer' },
+  { key: 'likes', label: 'Likes', num: true },
+  { key: 'dislikes', label: 'Dislikes', num: true },
+  { key: 'ratio', label: 'Like %', num: true },
+  { key: 'rating', label: 'Rating', num: true },
+  { key: 'votes', label: 'Votes', num: true },
+  { key: 'released', label: 'Released', num: true },
+];
+
+function renderHead() {
+  document.getElementById('thead').innerHTML = COLS.map(c => {
+    if (!c.key) return `<th>${c.label}</th>`;
+    const active = state.sort === c.key;
+    const arrow = active ? (state.dir < 0 ? ' ▼' : ' ▲') : '';
+    return `<th class="sortable${c.num ? ' num' : ''}${active ? ' active' : ''}" data-k="${c.key}">${c.label}${arrow}</th>`;
+  }).join('');
+}
+
+function render() {
+  renderHead();
+  const q = state.q.toLowerCase();
+  let list = games.filter(g =>
+    (!state.cat || g.tags.includes(state.cat)) &&
+    (!state.dev || g.dev === state.dev) &&
+    (!q || g.title.toLowerCase().includes(q) || g.dev.toLowerCase().includes(q) || g.desc.toLowerCase().includes(q)));
+  const k = state.sort, d = state.dir;
+  list.sort((a, b) => {
+    const x = a[k], y = b[k];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1; if (y == null) return -1;
+    const c = typeof x === 'string' ? x.localeCompare(y) : x - y;
+    return c * d || likeOrder(a, b);
+  });
+
+  document.getElementById('count').textContent = `${list.length.toLocaleString()} of ${games.length.toLocaleString()} games`;
+  document.getElementById('devFilter').innerHTML = state.dev
+    ? `<span class="chip">Developer: ${esc(state.dev)} <button title="Clear" id="clrDev">×</button></span>` : '';
+
+  document.getElementById('tbody').innerHTML = list.map(g => `
+    <tr>
+      <td class="num" title="Overall rank by likes">${g.rank}</td>
+      <td><img class="thumb" loading="lazy" src="${esc(thumbSmall(g.thumb))}" alt=""></td>
+      <td class="title">${newMark(g)}<a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.title)}</a><div class="desc" title="${esc(g.desc)}">${esc(g.desc)}</div></td>
+      <td><span class="dev" data-id="${esc(g.id)}">${esc(g.dev)}</span></td>
+      <td class="num likes">${fmt(g.likes)}</td>
+      <td class="num dislikes${g.est ? ' est' : ''}" ${g.est ? 'title="Estimated: total votes − likes"' : ''}>${g.est ? '~' : ''}${fmt(g.dislikes)}</td>
+      <td class="num">${g.ratio == null ? '–' : (g.ratio * 100).toFixed(1) + '%'}<div class="bar"><i style="width:${(g.ratio || 0) * 100}%"></i></div></td>
+      <td class="num">${g.rating ?? '–'}</td>
+      <td class="num">${fmt(g.votes)}</td>
+      <td class="num">${g.release?.label ?? '–'}</td>
+    </tr>`).join('');
+}
+
+const newMark = g => g.isNew ? `<span class="new" title="Released ${g.release.label} (2025 or later)">NEW</span>` : '';
+
+// Ask Poki's CDN for a small thumbnail instead of the 1200px original.
+const thumbSmall = u => u.replace(/width=\d+,height=\d+/, 'width=108,height=108');
+
+// ---------- developer popover ----------
+const pop = document.getElementById('pop');
+const byId = id => games.find(g => g.id === id);
+let hideTimer = null, popAnchor = null;
+
+function showPop(anchor) {
+  clearTimeout(hideTimer);
+  if (popAnchor === anchor && pop.classList.contains('open')) return;
+  popAnchor = anchor;
+  const cur = byId(anchor.dataset.id);
+  const list = byDev.get(cur.dev);
+  const totalLikes = list.reduce((s, g) => s + g.likes, 0);
+  pop.innerHTML = `
+    <div class="ph"><b>${esc(cur.dev)}</b>
+      <div>${list.length} game${list.length > 1 ? 's' : ''} · ${fmt(totalLikes)} total likes · <b>${esc(cur.title)}</b> is #${cur.devRank} of ${list.length}</div></div>
+    <div class="pl"><table>
+      <thead><tr><th class="num">#</th><th>Game</th><th class="num">Likes</th><th class="num">Dislikes</th><th class="num">Released</th></tr></thead>
+      <tbody>${list.map(g => `
+        <tr class="${g === cur ? 'cur' : ''}">
+          <td class="num rk">${g.devRank}</td>
+          <td>${newMark(g)}<a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.title)}</a></td>
+          <td class="num likes">${fmt(g.likes)}</td>
+          <td class="num dislikes${g.est ? ' est' : ''}">${g.est ? '~' : ''}${fmt(g.dislikes)}</td>
+          <td class="num">${g.release?.label ?? '–'}</td>
+        </tr>`).join('')}</tbody></table></div>`;
+  pop.classList.add('open');
+
+  // position next to the name, kept inside the viewport
+  const r = anchor.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let left = r.left, top = r.bottom + 6;
+  if (left + pw > innerWidth - 12) left = innerWidth - pw - 12;
+  if (top + ph > innerHeight - 12) top = Math.max(12, r.top - ph - 6);
+  pop.style.left = Math.max(12, left) + 'px';
+  pop.style.top = top + 'px';
+
+  const curRow = pop.querySelector('tr.cur');
+  if (curRow) curRow.scrollIntoView({ block: 'center' });
+}
+function scheduleHide() {
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => { pop.classList.remove('open'); popAnchor = null; }, 200);
+}
+
+document.addEventListener('mouseover', e => {
+  const dev = e.target.closest('.dev');
+  if (dev) showPop(dev);
+  else if (e.target.closest('#pop')) clearTimeout(hideTimer);
+});
+document.addEventListener('mouseout', e => {
+  if (e.target.closest('.dev, #pop') && !e.relatedTarget?.closest?.('.dev, #pop')) scheduleHide();
+});
+window.addEventListener('scroll', () => { pop.classList.remove('open'); popAnchor = null; }, { passive: true });
+
+// ---------- controls ----------
+document.getElementById('thead').addEventListener('click', e => {
+  const th = e.target.closest('th[data-k]'); if (!th) return;
+  const k = th.dataset.k;
+  if (state.sort === k) state.dir *= -1;
+  else { state.sort = k; state.dir = (k === 'title' || k === 'dev' || k === 'rank') ? 1 : -1; }
+  render();
+});
+let qTimer;
+document.getElementById('q').addEventListener('input', e => {
+  clearTimeout(qTimer); qTimer = setTimeout(() => { state.q = e.target.value.trim(); render(); }, 150);
+});
+document.getElementById('cat').addEventListener('change', e => { state.cat = e.target.value; render(); });
+// click a developer name to filter the table to that developer
+document.addEventListener('click', e => {
+  if (e.target.id === 'clrDev') { state.dev = ''; render(); return; }
+  const dev = e.target.closest('#tbody .dev');
+  if (dev) { state.dev = byId(dev.dataset.id).dev; pop.classList.remove('open'); popAnchor = null; render(); scrollTo(0, 0); }
+});
+new ResizeObserver(() => document.documentElement.style.setProperty('--hdr-h', document.getElementById('hdr').offsetHeight + 'px'))
+  .observe(document.getElementById('hdr'));
+
+// ---------- loading ----------
+const loader = document.getElementById('loader');
+const readFile = f => f && f.text().then(load);
+document.getElementById('file').addEventListener('change', e => readFile(e.target.files[0]));
+loader.addEventListener('dragover', e => { e.preventDefault(); loader.classList.add('drag'); });
+loader.addEventListener('dragleave', () => loader.classList.remove('drag'));
+loader.addEventListener('drop', e => { e.preventDefault(); loader.classList.remove('drag'); readFile(e.dataTransfer.files[0]); });
+
+fetch(encodeURI(CSV_PATH)).then(r => { if (!r.ok) throw 0; return r.text(); }).then(load)
+  .catch(() => { document.getElementById('loadMsg').textContent = 'Could not auto-load the CSV.'; });
+</script>
+</body>
+</html>
