@@ -41,6 +41,19 @@
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   tr:hover td { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
   .thumb { width: 54px; height: 54px; border-radius: 8px; object-fit: cover; background: var(--line); display: block; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { font: inherit; border: 0; background: var(--bg); color: var(--muted); padding: 6px 12px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .seg button:disabled { cursor: default; }
+  .glist { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+  .glist > span { white-space: nowrap; }
+  .glist a { color: var(--text); text-decoration: none; }
+  .glist a:hover { color: var(--accent); text-decoration: underline; }
+  .glist .gl { color: var(--good); font-size: 12px; margin-left: 3px; font-variant-numeric: tabular-nums; }
+  .more { font: inherit; font-size: 12px; border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
+  .devlink { font-weight: 600; cursor: pointer; }
+  .devlink:hover { color: var(--accent); text-decoration: underline; }
   .toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; user-select: none; }
   .toggle input { accent-color: var(--accent); margin: 0; cursor: pointer; }
   body.video-on .thumb[data-video] { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -78,6 +91,7 @@
 <body>
 <header id="hdr">
   <h1>Poki Games</h1>
+  <div class="seg" id="view"><button data-v="games" class="on" disabled>Games</button><button data-v="devs" disabled>Developers</button></div>
   <input type="search" id="q" placeholder="Search title, developer, description…" disabled>
   <select id="cat" disabled><option value="">All categories</option></select>
   <label class="toggle" title="Play the game's video preview when hovering its thumbnail"><input type="checkbox" id="videoToggle"> Hover videos</label>
@@ -149,7 +163,12 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 
 // ---------- state ----------
 let games = [], byDev = new Map();
-const state = { sort: 'likes', dir: -1, q: '', cat: '', dev: '' };
+const state = {
+  view: 'games', q: '', cat: '', dev: '',
+  sort: 'likes', dir: -1,        // games view
+  dsort: 'likes', ddir: -1,      // developers view
+  openDevs: new Set(),           // developers whose full game list is expanded
+};
 
 function load(text) {
   games = parseCSV(text).map(r => {
@@ -180,6 +199,7 @@ function load(text) {
   const cats = [...new Set(games.flatMap(g => g.tags))].sort();
   document.getElementById('cat').insertAdjacentHTML('beforeend', cats.map(c => `<option>${esc(c)}</option>`).join(''));
   document.getElementById('q').disabled = document.getElementById('cat').disabled = false;
+  document.querySelectorAll('#view button').forEach(b => b.disabled = false);
   document.getElementById('loader').hidden = true;
   document.getElementById('main').hidden = false;
   render();
@@ -200,30 +220,48 @@ const COLS = [
   { key: 'released', label: 'Released', num: true },
 ];
 
-function renderHead() {
-  document.getElementById('thead').innerHTML = COLS.map(c => {
+const DEV_COLS = [
+  { key: 'rank', label: '#', num: true },
+  { key: 'name', label: 'Developer' },
+  { key: 'count', label: 'Games', num: true },
+  { key: 'likes', label: 'Total likes', num: true },
+  { key: 'dislikes', label: 'Dislikes', num: true },
+  { key: 'ratio', label: 'Like %', num: true },
+  { key: 'avg', label: 'Avg likes / game', num: true },
+  { key: null, label: 'Games (most liked first)' },
+];
+const DEV_PREVIEW = 6; // games shown per developer before "+N more"
+
+function renderHead(cols, sort, dir) {
+  document.getElementById('thead').innerHTML = cols.map(c => {
     if (!c.key) return `<th>${c.label}</th>`;
-    const active = state.sort === c.key;
-    const arrow = active ? (state.dir < 0 ? ' ▼' : ' ▲') : '';
+    const active = sort === c.key;
+    const arrow = active ? (dir < 0 ? ' ▼' : ' ▲') : '';
     return `<th class="sortable${c.num ? ' num' : ''}${active ? ' active' : ''}" data-k="${c.key}">${c.label}${arrow}</th>`;
   }).join('');
 }
 
+// sort a list by key k in direction d (nulls last), falling back to `tie`
+function sortBy(list, k, d, tie) {
+  return list.sort((a, b) => {
+    const x = a[k], y = b[k];
+    if (x == null && y == null) return tie(a, b);
+    if (x == null) return 1; if (y == null) return -1;
+    const c = typeof x === 'string' ? x.localeCompare(y) : x - y;
+    return c * d || tie(a, b);
+  });
+}
+
 function render() {
-  renderHead();
+  document.querySelectorAll('#view button').forEach(b => b.classList.toggle('on', b.dataset.v === state.view));
+  if (state.view === 'devs') return renderDevs();
+  renderHead(COLS, state.sort, state.dir);
   const q = state.q.toLowerCase();
   let list = games.filter(g =>
     (!state.cat || g.tags.includes(state.cat)) &&
     (!state.dev || g.dev === state.dev) &&
     (!q || g.title.toLowerCase().includes(q) || g.dev.toLowerCase().includes(q) || g.desc.toLowerCase().includes(q)));
-  const k = state.sort, d = state.dir;
-  list.sort((a, b) => {
-    const x = a[k], y = b[k];
-    if (x == null && y == null) return 0;
-    if (x == null) return 1; if (y == null) return -1;
-    const c = typeof x === 'string' ? x.localeCompare(y) : x - y;
-    return c * d || likeOrder(a, b);
-  });
+  sortBy(list, state.sort, state.dir, likeOrder);
 
   document.getElementById('count').textContent = `${list.length.toLocaleString()} of ${games.length.toLocaleString()} games`;
   document.getElementById('devFilter').innerHTML = state.dev
@@ -242,6 +280,61 @@ function render() {
       <td class="num">${fmt(g.votes)}</td>
       <td class="num">${g.release?.label ?? '–'}</td>
     </tr>`).join('');
+}
+
+// One row per developer. The category filter decides which games count toward the
+// totals; the search only decides which developers are shown (by name or game title).
+function renderDevs() {
+  renderHead(DEV_COLS, state.dsort, state.ddir);
+  const q = state.q.toLowerCase();
+  const groups = new Map();
+  for (const g of games) {
+    if (state.cat && !g.tags.includes(state.cat)) continue;
+    if (!groups.has(g.dev)) groups.set(g.dev, []);
+    groups.get(g.dev).push(g);
+  }
+  const devs = [...groups].map(([name, list]) => {
+    list.sort(likeOrder);
+    const likes = list.reduce((s, g) => s + g.likes, 0);
+    const dislikes = list.reduce((s, g) => s + (g.dislikes || 0), 0);
+    return { name, list, count: list.length, likes, dislikes,
+             ratio: likes + dislikes ? likes / (likes + dislikes) : null, avg: likes / list.length };
+  });
+  const devOrder = (a, b) => b.likes - a.likes || b.count - a.count || a.name.localeCompare(b.name);
+  devs.sort(devOrder).forEach((d, i) => d.rank = i + 1);
+
+  const shown = sortBy(devs.filter(d => !q || d.name.toLowerCase().includes(q) ||
+    d.list.some(g => g.title.toLowerCase().includes(q))), state.dsort, state.ddir, devOrder);
+
+  document.getElementById('count').textContent = `${shown.length.toLocaleString()} of ${devs.length.toLocaleString()} developers`;
+  document.getElementById('devFilter').innerHTML = '';
+  document.getElementById('tbody').innerHTML = shown.map(d => {
+    const open = state.openDevs.has(d.name);
+    const items = (open ? d.list : d.list.slice(0, DEV_PREVIEW)).map(g =>
+      `<span>${newMark(g)}<a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.title)}</a><span class="gl">${fmt(g.likes)}</span></span>`).join('');
+    const extra = d.count - DEV_PREVIEW;
+    const more = extra > 0 ? `<button class="more" data-dev="${esc(d.name)}">${open ? 'show less' : `+${extra} more`}</button>` : '';
+    return `
+    <tr>
+      <td class="num" title="Rank by total likes">${d.rank}</td>
+      <td><span class="devlink" data-dev="${esc(d.name)}" title="Show this developer's games">${esc(d.name)}</span></td>
+      <td class="num">${d.count}</td>
+      <td class="num likes">${fmt(d.likes)}</td>
+      <td class="num dislikes">${fmt(d.dislikes)}</td>
+      <td class="num">${d.ratio == null ? '–' : (d.ratio * 100).toFixed(1) + '%'}<div class="bar"><i style="width:${(d.ratio || 0) * 100}%"></i></div></td>
+      <td class="num">${fmt(d.avg)}</td>
+      <td><div class="glist">${items}${more}</div></td>
+    </tr>`;
+  }).join('');
+}
+
+function setView(v) {
+  if (state.view === v) return;
+  state.view = v;
+  document.getElementById('q').placeholder = v === 'devs' ? 'Search developer or game title…' : 'Search title, developer, description…';
+  hideVideo();
+  render();
+  scrollTo(0, 0);
 }
 
 const newMark = g => g.isNew ? `<span class="new" title="Released ${g.release.label} (2025 or later)">NEW</span>` : '';
@@ -350,9 +443,13 @@ window.addEventListener('scroll', () => { pop.classList.remove('open'); popAncho
 document.getElementById('thead').addEventListener('click', e => {
   const th = e.target.closest('th[data-k]'); if (!th) return;
   const k = th.dataset.k;
-  if (state.sort === k) state.dir *= -1;
-  else { state.sort = k; state.dir = (k === 'title' || k === 'dev' || k === 'rank') ? 1 : -1; }
+  const [sk, dk] = state.view === 'devs' ? ['dsort', 'ddir'] : ['sort', 'dir'];
+  if (state[sk] === k) state[dk] *= -1;
+  else { state[sk] = k; state[dk] = ['title', 'dev', 'name', 'rank'].includes(k) ? 1 : -1; }
   render();
+});
+document.getElementById('view').addEventListener('click', e => {
+  const b = e.target.closest('button[data-v]'); if (b) setView(b.dataset.v);
 });
 let qTimer;
 document.getElementById('q').addEventListener('input', e => {
@@ -362,6 +459,15 @@ document.getElementById('cat').addEventListener('change', e => { state.cat = e.t
 // click a developer name to filter the table to that developer
 document.addEventListener('click', e => {
   if (e.target.id === 'clrDev') { state.dev = ''; render(); return; }
+  const more = e.target.closest('.more');
+  if (more) {
+    const n = more.dataset.dev;
+    state.openDevs.has(n) ? state.openDevs.delete(n) : state.openDevs.add(n);
+    render(); return;
+  }
+  // developers view: click a name to see that developer's games in the games view
+  const link = e.target.closest('.devlink');
+  if (link) { state.dev = link.dataset.dev; setView('games'); return; }
   const dev = e.target.closest('#tbody .dev');
   if (dev) { state.dev = byId(dev.dataset.id).dev; pop.classList.remove('open'); popAnchor = null; render(); scrollTo(0, 0); }
 });
